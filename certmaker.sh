@@ -31,12 +31,14 @@ Available options:
 -s, --server           Add the group "Server" to this certificate
 -w, --workstation      Add the group "Workstation" to this certificate
 -g, --group ""     (+) Add a group to this certificate
+-p, --public ""        If an existing key is provided (e.g. from a mobile
+                         device), use it.
 
 (*) Required setting
 (+) Multiple options can be supplied
 (!) Mutually exclusive options (-d/--index and -b/--subnet)
 EOF
-exit 1
+  exit 1
 }
 
 # shellcheck disable=SC2034
@@ -74,6 +76,7 @@ parse_params() {
   subnet=""
   subnet_cidr=""
   empty_command=1
+  keyfile=""
 
   while :; do
     case "${1-}" in
@@ -179,6 +182,12 @@ parse_params() {
         fi
       done
       [ "$exists" -eq 0 ] && group+=("${2-}")
+      shift
+      ;;
+    -p | --public)
+      empty_command=0
+      [ -n "$keyfile" ] && error "Public Key file already defined once in this command. For safety sake, aborting here."
+      keyfile="${2-}"
       shift
       ;;
     -?*)
@@ -311,6 +320,11 @@ then
   error "Certificate Path does not exist." 255
 fi
 
+if [[ ! -r "$keyfile" ]]
+then
+  error "Client Key either does not exist, or you can't read it." 254
+fi
+
 if [[ ! -r "$ca_key_path" && ! -r "$ca_cert_path" ]]
 then
   error "CA Certificate or CA Key either do not exist, or you can't read them." 254
@@ -387,7 +401,6 @@ do
     then
       increment=$(( increment + 1 ))
       real_ip=""
-      # error "The allocated IP conflicts with an existing IP: ${used_ips[$an_ip]}" 5
     fi
   done
 done
@@ -407,5 +420,11 @@ do
   group_list="${group_list}${group[$i]}"
 done
 
-echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
-"${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
+if [ -z "${keyfile}" ]
+then
+  echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
+  "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
+else
+  echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${keyfile}"
+  "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${keyfile}"
+fi
