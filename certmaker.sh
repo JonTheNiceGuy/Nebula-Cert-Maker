@@ -7,9 +7,14 @@ nebula_cert_bin="/usr/sbin/nebula-cert"
 
 usage() {
   cat <<EOF
-Usage: $(basename "${BASH_SOURCE[0]}") [-h] [-v] [-f] -p param_value arg1 [arg2...]
+Usage: $(basename "${BASH_SOURCE[0]}") [-h] [-v] -n hostname [-i X] [-d X] \\
+       [-b X.X.X.X/X] [-f nebula.example.org] [-l] [-s] [-w] [-g somegroup]
 
-Script description here.
+This is an opinionated script for automating the generation of Nebula node
+certificates. Many options will use defaults from the root certificate, assuming
+the root CA was created with the following:
+
+  user@host:~$ nebula-cert ca --name nebula.example.org --ips 192.0.2.0/24
 
 Available options:
 
@@ -18,7 +23,8 @@ Available options:
 -n, --name ""      (*) Name of the device to which the certificate will be issued
 -i, --ip ""            An integer to add to the base of the subnet (assuming 
                          192.0.2.0/24, add 1 = 192.0.2.1/24)
--d, --index ""         Index of the subnet that the CA will permit
+-d, --index ""     (!) Index of the subnet that the CA will permit
+-b, --subnet ""    (!) The CIDR to use if the CA does not already have one defined.
 -f, --fqdn_root "" (+) The DNS suffix to add to the DNS names (e.g. example.org)
 -c, --cert_path ""     The path to the CA certificate and key
 -l, --lighthouse       Add the group "Lighthouse" to this certificate
@@ -28,7 +34,9 @@ Available options:
 
 (*) Required setting
 (+) Multiple options can be supplied
+(!) Mutually exclusive options (-d/--index and -b/--subnet)
 EOF
+exit 1
 }
 
 # shellcheck disable=SC2034
@@ -64,28 +72,50 @@ parse_params() {
   cert_path="/root/nebula"
   fqdn_root=()
   subnet=""
+  subnet_cidr=""
+  empty_command=1
 
   while :; do
     case "${1-}" in
-    -h | --help) usage ;;
-    -v | --verbose) set -x ;;
-    --no-color) NO_COLOR=1 ;;
+    -h | --help)
+      usage
+      ;;
+    -v | --verbose)
+      empty_command=0
+      set -x
+      ;;
+    --no-color)
+      empty_command=0
+      NO_COLOR=1
+      ;;
     -n | --name)
+      empty_command=0
       [ -n "$name" ] && error "Name already defined once in this command. For safety sake, aborting here."
       name="${2-}"
       shift
       ;;
     -i | --ip)
+      empty_command=0
       [ -n "$ip" ] && error "IP already defined once in this command. For safety sake, aborting here."
       ip="${2-}"
       shift
       ;;
     -d | --index)
+      empty_command=0
       [ -n "$subnet" ] && error "Nebula Certificate Subnet index to use already defined once in this command. For safety sake, aborting here."
+      [ -n "$subnet_cidr" ] && error "The Nebula Certificate Subnet index (-d/--index) and Subnet CIDR (-b/--subnet) are mutually exclusive options. Aborting."
       subnet=$(( 0 + "${2-}" ))
       shift
       ;;
+    -b | --subnet)
+      empty_command=0
+      [ -n "$subnet_cidr" ] && error "The Subnet CIDR to use for this node has already been defined once in this command. For safety sake, aborting here."
+      [ -n "$subnet_cidr" ] && error "The Nebula Certificate Subnet index (-d/--index) and Subnet CIDR (-b/--subnet) are mutually exclusive options. Aborting."
+      subnet_cidr="${2-}"
+      shift
+      ;;
     -f | --fqdn_root)
+      empty_command=0
       exists=0
       for i in "${!fqdn_root[@]}"
       do
@@ -98,10 +128,12 @@ parse_params() {
       shift
       ;;
     -c | --cert_path)
+      empty_command=0
       cert_path="${2-}"
       shift
       ;;
     -l | --lighthouse)
+      empty_command=0
       exists=0
       for i in "${!group[@]}"
       do
@@ -113,6 +145,7 @@ parse_params() {
       [ "$exists" -eq 0 ] && group+=("Lighthouse")
       ;;
     -s | --server)
+      empty_command=0
       exists=0
       for i in "${!group[@]}"
       do
@@ -124,6 +157,7 @@ parse_params() {
       [ "$exists" -eq 0 ] && group+=("Server")
       ;;
     -w | --workstation)
+      empty_command=0
       exists=0
       for i in "${!group[@]}"
       do
@@ -135,6 +169,7 @@ parse_params() {
       [ "$exists" -eq 0 ] && group+=("Workstation")
       ;;
     -g | --group)
+      empty_command=0
       exists=0
       for i in "${!group[@]}"
       do
@@ -146,14 +181,62 @@ parse_params() {
       [ "$exists" -eq 0 ] && group+=("${2-}")
       shift
       ;;
-    -?*) error "Unknown option: $1" ;;
+    -?*)
+      unknown_option="$1"
+      ;;
     *) break ;;
     esac
     shift
   done
 
+  [[ $empty_command -eq 1 ]] && usage
+  if [ -n "${unknown_option-}" ]
+  then
+    msg "[ERROR] ${RED}Unknown option: ${unknown_option}${NOFORMAT}"
+    usage
+  fi
+
   # check required params and arguments
   [[ -z "${name-}" ]] && error "Missing required parameter: name (use -n or --name followed by the value)"
+
+  return 0
+}
+
+# shellcheck disable=SC2206
+# Source: https://stackoverflow.com/a/50207056
+valid_cidr_network() {
+  local ip="${1%/*}"    # strip bits to leave ip address
+  local bits="${1#*/}"  # strip ip address to leave bits
+  local IFS=.; local -a a=($ip)
+
+  # Sanity checks (only simple regexes)
+  if [[ $ip =~ ^[0-9]+(\.[0-9]+){3}$ ]] 
+  then
+    if [[ $bits =~ ^[0-9]+$ ]]
+    then
+      if [[ $bits -gt 32 ]]
+      then
+        error "The Mask portion of the CIDR exceeds 32 (which is the maximum value for an IPv4 CIDR."
+      fi
+    else
+      error "The IP portion of the CIDR for this cert has an octet which does not comprise of digits."
+    fi
+  else
+    error "The IP portion of the CIDR for this cert fails to match a four-quad octet (1.2.3.4) pattern."
+  fi
+
+  # Create an array of 8-digit binary numbers from 0 to 255
+  local -a binary=({0..1}{0..1}{0..1}{0..1}{0..1}{0..1}{0..1}{0..1})
+  local binip=""
+
+  # Test and append values of quads
+  for quad in {0..3}; do
+    [[ "${a[$quad]}" -gt 255 ]] && error "One of the octets in the CIDR for this cert has a value which exceeds 255."
+    printf -v binip '%s%s' "$binip" "${binary[${a[$quad]}]}"
+  done
+
+  # Fail if any bits are set in the host portion
+  [[ ${binip:$bits} = *1* ]] && error "The address in the CIDR for this cert is not a valid network address (e.g. 192.0.2.0/24 or 192.0.2.128/25)."
 
   return 0
 }
@@ -213,6 +296,7 @@ cidr_iter() {
   result="${ip_range[$(( $2 % ${#ip_range[@]}))]}/${mask}"
 }
 
+
 setup_colors
 parse_params "$@"
 
@@ -250,7 +334,10 @@ do
   ranges+=("$range")
 done
 
-[ ${#ranges[@]} -eq 0 ] && ranges=("10.44.88.0/24")
+[ -z "${subnet_cidr-}" ] && subnet_cidr="10.44.88.0/24"
+valid_cidr_network "${subnet_cidr}"
+
+[ ${#ranges[@]} -eq 0 ] && ranges=("${subnet_cidr}")
 [ -z "$subnet" ] && subnet=0
 
 if [ $subnet -gt ${#ranges[@]} ]
@@ -267,32 +354,42 @@ fi
 if [ -z "${ip}" ]
 then
   # Source: https://linuxhint.com/convert_hexadecimal_decimal_bash/
-  ip="$(( 16#$(echo -n "${2}" | md5sum -z | cut -c-14) ))"
+  ip="$(( 16#$(echo -n "${fqdn}" | md5sum -z | cut -c-14) ))"
 fi
 
-cidr_iter "${ranges[$subnet]}" "$(( ip - 1 ))"
-real_ip="${result}"
-
 used_ips=()
-for cert_file in *.crt
-do
-  json="$("${nebula_cert_bin}" print -json -path "${cert_file}")"
-  if echo "${json}" | grep '"isCa":false' >/dev/null 2>/dev/null
-  then
-    IFS=',' read -r -a used_ip_array <<< "$(echo "${json}" | jq -c .details.ips[] -r)"
-    for i in "${!used_ip_array[@]}"
-    do
-      used_ips+=("${used_ip_array[$i]}:${cert_file}")
-    done
-  fi
-done
+if [[ $(( 0 + $(find . -name "*.crt" | wc -l) )) -gt 0 ]]
+then
+  for cert_file in *.crt
+  do
+    json="$("${nebula_cert_bin}" print -json -path "${cert_file}")"
+    if echo "${json}" | grep '"isCa":false' >/dev/null 2>/dev/null
+    then
+      IFS=',' read -r -a used_ip_array <<< "$(echo "${json}" | jq -c .details.ips[] -r)"
+      for i in "${!used_ip_array[@]}"
+      do
+        used_ips+=("${used_ip_array[$i]}:${cert_file}")
+      done
+    fi
+  done
+fi
 
-for an_ip in "${!used_ips[@]}"
+increment=0
+real_ip=""
+until [ -n "$real_ip" ]
 do
-  if [[ "${used_ips[$an_ip]}" =~ ^${real_ip}: ]]
-  then
-    error "The allocated IP conflicts with an existing IP: ${used_ips[$an_ip]}" 5
-  fi
+  cidr_iter "${ranges[$subnet]}" "$(( ip + increment - 1 ))"
+  real_ip="${result}"
+
+  for an_ip in "${!used_ips[@]}"
+  do
+    if [[ "${used_ips[$an_ip]}" =~ ^${real_ip}: ]]
+    then
+      increment=$(( increment + 1 ))
+      real_ip=""
+      # error "The allocated IP conflicts with an existing IP: ${used_ips[$an_ip]}" 5
+    fi
+  done
 done
 
 msg "${RED}Read parameters:${NOFORMAT}"
