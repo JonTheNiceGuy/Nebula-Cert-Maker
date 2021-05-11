@@ -286,7 +286,6 @@ cidr_iter() {
 
   # generate list of ip addresses
   local bytes=(0 0 0 0)
-  local subnet_start=""
   local ip_range=()
   for i in $(seq 0 $((255-maskarr[0]))); do
     bytes[0]="$(( i+(iparr[0] & maskarr[0]) ))"
@@ -296,7 +295,6 @@ cidr_iter() {
         bytes[2]="$(( k+(iparr[2] & maskarr[2]) ))"
         for l in $(seq 1 $((255-maskarr[3]))); do
           bytes[3]="$(( l+(iparr[3] & maskarr[3]) ))"
-          [ -z "${subnet_start}" ] && subnet_start="$(printf "%d.%d.%d.%d\n" "${bytes[@]}")"
           ip_range+=("$(printf "%d.%d.%d.%d\n" "${bytes[@]}")")
         done
       done
@@ -304,7 +302,6 @@ cidr_iter() {
   done
   result="${ip_range[$(( $2 % ${#ip_range[@]}))]}/${mask}"
 }
-
 
 setup_colors
 parse_params "$@"
