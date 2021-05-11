@@ -70,7 +70,7 @@ current working directory, named for the name of the device.
 
 If you've created the public key to use (perhaps on a mobile device) already, you may use the `-k`
 or `--key` option to specify the path for that public key, like this
-`./certmaker.sh -n mobile -k mobile.key`
+`./certmaker.sh -n mobile -k mobile.key`.
 
 ## Putting it together
 
@@ -94,4 +94,12 @@ nebula-cert ca -out-crt /tmp/nebula_ca/ca.crt -out-key /tmp/nebula_ca/ca.key -ip
 ./certmaker.sh --cert_path /tmp/nebula_ca --index 1 --name admin1 --workstation
 # Second workstation, admin2.nebula.example.org - 198.51.100.77, group "Workstation"
 ./certmaker.sh -c /tmp/nebula_ca -d 1 -n admin2 -w
+# First Mobile device - Create the private/public key pairing first
+nebula-cert keygen -out-key mobile1.key -out-pub mobile1.pub
+# Then sign it, mobile1.nebula.example.org - 198.51.100.217, group "mobile"
+./certmaker.sh --cert_path /tmp/nebula_ca --index 1 --name mobile1 --group mobile --public mobile1.pub
+# Second Mobile device - Create the private/public key pairing first
+nebula-cert keygen -out-key mobile2.key -out-pub mobile2.pub
+# Then sign it, mobile2.nebula.example.org - 198.51.100.22, group "mobile"
+./certmaker.sh -c /tmp/nebula_ca -d 1 -n mobile2 -g mobile -p mobile2.pub
 ```
