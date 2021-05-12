@@ -1,0 +1,26 @@
+{
+  "projectName": "Nebula-Cert-Maker",
+  "projectOwner": "JonTheNiceGuy",
+  "repoType": "github",
+  "repoHost": "",
+  "files": [
+    "README.md"
+  ],
+  "imageSize": 100,
+  "commit": true,
+  "commitConvention": "none",
+  "contributors": [
+    {
+      "login": "JonTheNiceGuy",
+      "name": "Jon \"The Nice Guy\" Spriggs",
+      "avatar_url": "https://avatars.githubusercontent.com/u/228671?v=4",
+      "profile": "https://jon.sprig.gs/",
+      "contributions": [
+        "code",
+        "doc",
+        "ideas"
+      ]
+    }
+  ],
+  "contributorsPerLine": 7
+}
