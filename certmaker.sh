@@ -79,7 +79,7 @@ parse_params() {
   subnet=""
   subnet_cidr=""
   empty_command=1
-  keyfile=""
+  publickeyfile=""
 
   while :; do
     case "${1-}" in
@@ -189,8 +189,8 @@ parse_params() {
       ;;
     -p | --public)
       empty_command=0
-      [ -n "$keyfile" ] && error "Public Key file already defined once in this command. For safety sake, aborting here."
-      keyfile="${2-}"
+      [ -n "$publickeyfile" ] && error "Public Key file already defined once in this command. For safety sake, aborting here."
+      publickeyfile="${2-}"
       shift
       ;;
     -?*)
@@ -320,7 +320,7 @@ then
   error "Certificate Path does not exist." 255
 fi
 
-if [[ ! -r "$keyfile" ]]
+if [[ ! -r "$publickeyfile" ]]
 then
   error "Client Key either does not exist, or you can't read it." 254
 fi
@@ -420,11 +420,11 @@ do
   group_list="${group_list}${group[$i]}"
 done
 
-if [ -z "${keyfile}" ]
+if [ -z "${publickeyfile}" ]
 then
   echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
   "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
 else
-  echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${keyfile}"
-  "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${keyfile}"
+  echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${publickeyfile}"
+  "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${publickeyfile}"
 fi
