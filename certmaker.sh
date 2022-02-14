@@ -3,7 +3,10 @@
 
 set -Eeuo pipefail
 
-nebula_cert_bin="/usr/sbin/nebula-cert"
+if [ -z "$nebula_cert_bin" ]
+then
+  nebula_cert_bin="$(which nebula-cert)"
+fi
 
 usage() {
   cat <<EOF
