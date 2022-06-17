@@ -114,6 +114,7 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
 <table>
   <tr>
     <td align="center"><a href="https://jon.sprig.gs/"><img src="https://avatars.githubusercontent.com/u/228671?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Jon "The Nice Guy" Spriggs</b></sub></a><br /><a href="https://github.com/JonTheNiceGuy/Nebula-Cert-Maker/commits?author=JonTheNiceGuy" title="Code">💻</a> <a href="https://github.com/JonTheNiceGuy/Nebula-Cert-Maker/commits?author=JonTheNiceGuy" title="Documentation">📖</a> <a href="#ideas-JonTheNiceGuy" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://sfxworks.net"><img src="https://avatars.githubusercontent.com/u/5921035?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Samuel Walker</b></sub></a><br /><a href="https://github.com/JonTheNiceGuy/Nebula-Cert-Maker/issues?q=author%3Asfxworks" title="Bug reports">🐛</a></td>
   </tr>
 </table>
 
