@@ -2,7 +2,7 @@
   "projectName": "Nebula-Cert-Maker",
   "projectOwner": "JonTheNiceGuy",
   "repoType": "github",
-  "repoHost": "",
+  "repoHost": "https://github.com",
   "files": [
     "README.md"
   ],
@@ -20,7 +20,17 @@
         "doc",
         "ideas"
       ]
+    },
+    {
+      "login": "sfxworks",
+      "name": "Samuel Walker",
+      "avatar_url": "https://avatars.githubusercontent.com/u/5921035?v=4",
+      "profile": "https://sfxworks.net",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
-  "contributorsPerLine": 7
+  "contributorsPerLine": 7,
+  "skipCi": true
 }
