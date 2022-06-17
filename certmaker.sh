@@ -3,9 +3,20 @@
 
 set -Eeuo pipefail
 
-if [ -z "$nebula_cert_bin" ]
+if [ -z "${nebula_cert_bin:-""}" ]
 then
-  nebula_cert_bin="$(which nebula-cert)"
+  nebula_cert_bin="$(which nebula-cert || echo "")"
+  if [ -z "${nebula_cert_bin}" ]
+  then
+    echo "nebula-cert not located using which. Please set the nebula_cert_bin variable."
+    exit 1
+  fi
+fi
+
+if [ ! -e "${nebula_cert_bin}" ]
+then
+  echo "nebula-cert not located at the path specified. Please install and retry."
+  exit 1
 fi
 
 usage() {
