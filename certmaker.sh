@@ -1,24 +1,15 @@
 #!/usr/bin/env bash
-# Template from: https://betterdev.blog/minimal-safe-bash-script-template/
+# This is an opinionated script for automating the generation of Nebula node
+# certificates. Many options will use defaults from the root certificate.
+#
+# The script uses elements of the template from:
+# https://betterdev.blog/minimal-safe-bash-script-template/
+#
+# It is released under an MIT license.
 
 set -Eeuo pipefail
 
-if [ -z "${nebula_cert_bin:-""}" ]
-then
-  nebula_cert_bin="$(which nebula-cert || echo "")"
-  if [ -z "${nebula_cert_bin}" ]
-  then
-    echo "nebula-cert not located using which. Please set the nebula_cert_bin variable."
-    exit 1
-  fi
-fi
-
-if [ ! -e "${nebula_cert_bin}" ]
-then
-  echo "nebula-cert not located at the path specified. Please install and retry."
-  exit 1
-fi
-
+# This returns the usage detalls for the application
 usage() {
   cat <<EOF
 Usage: $(basename "${BASH_SOURCE[0]}") [-h] [-v] -n hostname [-i X] [-d X] \\
@@ -35,7 +26,7 @@ Available options:
 -h, --help             Print this help and exit
 -v, --verbose          Print script debug info
 -n, --name ""      (*) Name of the device to which the certificate will be issued
--i, --ip ""            An integer to add to the base of the subnet (assuming 
+-i, --ip ""            An integer to add to the base of the subnet (assuming
                          192.0.2.0/24, add 1 = 192.0.2.1/24)
 -d, --index ""     (!) Index of the subnet that the CA will permit
 -b, --subnet ""    (!) The CIDR to use if the CA does not already have one defined.
@@ -55,32 +46,9 @@ EOF
   exit 1
 }
 
-# shellcheck disable=SC2034
-setup_colors() {
-  if [[ -t 2 ]] && [[ -z "${NO_COLOR-}" ]] && [[ "${TERM-}" != "dumb" ]]; then
-    NOFORMAT='\033[0m' RED='\033[0;31m' GREEN='\033[0;32m' ORANGE='\033[0;33m' BLUE='\033[0;34m' PURPLE='\033[0;35m' CYAN='\033[0;36m' YELLOW='\033[1;33m' BOLD='\033[1m' DIM='\033[2m' ITALIC='\033[3m' UNDERLINE='\033[4m' BLINK='\033[5m'
-  else
-    NOFORMAT='' RED='' GREEN='' ORANGE='' BLUE='' PURPLE='' CYAN='' YELLOW='' BOLD='' DIM='' ITALIC='' UNDERLINE='' BLINK=''
-  fi
-}
-
-msg() {
-  echo >&2 -e "${1-}"
-}
-
-warn() {
-  local msg=$1
-  msg "[WARNING] ${PURPLE}$msg${NOFORMAT}"
-}
-
-error() {
-  local msg=$1
-  local code=${2-1}
-  msg "[ERROR] ${RED}$msg${NOFORMAT}"
-  exit "$code"
-}
-
+# This function parses the parameters for the application
 parse_params() {
+  debug "parse_params"
   # default values of variables set from params
   name=''
   ip=''
@@ -221,19 +189,57 @@ parse_params() {
 
   # check required params and arguments
   [[ -z "${name-}" ]] && error "Missing required parameter: name (use -n or --name followed by the value)"
-
+  debug "parse_params done"
   return 0
+}
+
+# This function returns the name of the FQDN associated with the CA Certificate.
+get_ca_name() {
+  debug "get_ca_name"
+  "${nebula_cert_bin}" print -path "$ca_cert_path" | grep "Name: " | sed -e 's/^.*Name: //'
+  debug "get_ca_name done"
+}
+
+# This function returns the IP address range assigned to the passed certificate
+get_ip_ranges() {
+  debug "get_ip_ranges"
+  local content
+  if grep -q "NebulaCertificate {" <<< "$1"
+  then
+    content="$1"
+  else
+    content="$("${nebula_cert_bin}" print -path "$1")"
+  fi
+  local BLOCK_RUN=0
+  local line
+  while read -r line
+  do
+    if [ "$BLOCK_RUN" -eq 1 ] && echo "$line" | grep -q "]"
+    then
+      BLOCK_RUN=0
+    elif [ "$BLOCK_RUN" -eq 1 ]
+    then
+      echo "$line" | sed -E -e 's/^[^0-9]+//'
+    elif echo "$line" | grep -q "Ips:"
+    then
+      BLOCK_RUN=1
+      unset line
+    fi
+  done <<< "$content"
+  debug "get_ip_ranges done"
 }
 
 # shellcheck disable=SC2206
 # Source: https://stackoverflow.com/a/50207056
-valid_cidr_network() {
+# This function confirms the IPv4 address supplied is valid.
+valid_ipv4_cidr_network() {
+  debug "valid_ipv4_cidr_network"
   local ip="${1%/*}"    # strip bits to leave ip address
   local bits="${1#*/}"  # strip ip address to leave bits
   local IFS=.; local -a a=($ip)
 
   # Sanity checks (only simple regexes)
-  if [[ $ip =~ ^[0-9]+(\.[0-9]+){3}$ ]] 
+  if [[ $ip =~ ^[0-9]+(\.[0-9]+){3}$ ]]
   then
     if [[ $bits =~ ^[0-9]+$ ]]
     then
@@ -260,14 +266,16 @@ valid_cidr_network() {
 
   # Fail if any bits are set in the host portion
   [[ ${binip:$bits} = *1* ]] && error "The address in the CIDR for this cert is not a valid network address (e.g. 192.0.2.0/24 or 192.0.2.128/25)."
-
+  debug "valid_ipv4_cidr_network done"
   return 0
 }
 
 # shellcheck disable=SC2206
 # Source: https://gist.github.com/thom-nic/2556a6cc3865fba6330f61b802438c05/340312b15993115e2c206b2f61ce3820b4129b27
 # With tweaks!
-cidr_iter() {
+# This function creates an array of IPv4 addresses in a subnet
+ipv4_cidr_iter() {
+  debug "ipv4_cidr_iter"
   # create array containing network address and subnet
   local network=(${1//\// })
   # split network address by dot
@@ -298,9 +306,16 @@ cidr_iter() {
   [[ ${maskarr[2]} == 255 ]] && maskarr[1]=255
   [[ ${maskarr[1]} == 255 ]] && maskarr[0]=255
 
+  # Get messaging ready
+  local counter=0
+  local message=0
+  local rounds=0
+
+  local totalrounds=$(( (256-maskarr[0]) * (256-maskarr[1]) * (256-maskarr[2]) * (256-maskarr[3])  ))
+
   # generate list of ip addresses
   local bytes=(0 0 0 0)
-  local ip_range=()
+  ip_range=()
   for i in $(seq 0 $((255-maskarr[0]))); do
     bytes[0]="$(( i+(iparr[0] & maskarr[0]) ))"
     for j in $(seq 0 $((255-maskarr[1]))); do
@@ -308,6 +323,24 @@ cidr_iter() {
       for k in $(seq 0 $((255-maskarr[2]))); do
         bytes[2]="$(( k+(iparr[2] & maskarr[2]) ))"
         for l in $(seq 1 $((255-maskarr[3]))); do
+          totalrounds=$((totalrounds-1))
+          counter=$((counter+1))
+          if [ $counter -gt 500 ]
+          then
+            if [ $message -eq 0 ]
+            then
+              warn "There is a large processing activity ($totalrounds remaining). Please wait."
+              message=1
+            fi
+            echo -n .
+            rounds=$((rounds+1))
+            counter=0
+            if [ $rounds -eq 80 ]
+            then
+              printf " (%s remaining)\n" "$totalrounds"
+              rounds=0
+            fi
+          fi
           bytes[3]="$(( l+(iparr[3] & maskarr[3]) ))"
           ip_range+=("$(printf "%d.%d.%d.%d\n" "${bytes[@]}")")
         done
@@ -315,127 +348,193 @@ cidr_iter() {
     done
   done
   result="${ip_range[$(( $2 % ${#ip_range[@]}))]}/${mask}"
+  if [ $message -eq 1 ]
+  then
+    echo ""
+    warn "Done"
+  fi
+  debug "ipv4_cidr_iter done"
 }
 
-setup_colors
-parse_params "$@"
+# shellcheck disable=SC2034
+setup_colors() {
+  if [[ -t 2 ]] && [[ -z "${NO_COLOR-}" ]] && [[ "${TERM-}" != "dumb" ]]; then
+    NOFORMAT='\033[0m' RED='\033[0;31m' GREEN='\033[0;32m'
+    ORANGE='\033[0;33m' BLUE='\033[0;34m' PURPLE='\033[0;35m'
+    CYAN='\033[0;36m' YELLOW='\033[1;33m' BOLD='\033[1m'
+    DIM='\033[2m' ITALIC='\033[3m' UNDERLINE='\033[4m' BLINK='\033[5m'
+  else
+    NOFORMAT='' RED='' GREEN='' ORANGE='' BLUE='' PURPLE=''
+    CYAN='' YELLOW='' BOLD='' DIM='' ITALIC='' UNDERLINE='' BLINK=''
+  fi
+}
 
-[ -e "${name}.crt" ] && error "Certificate has already been created." 2
+msg() {
+  echo >&2 -e "${1-}"
+}
 
-ca_key_path="$cert_path/ca.key"
-ca_cert_path="$cert_path/ca.crt"
-fqdn=""
+debug() {
+  local msg=$1
+  if [ -n "${DEBUG:-}" ]
+  then
+    msg "[DEBUG] ${PURPLE}$msg${NOFORMAT}"
+  fi
+}
 
-if [ ! -e "$cert_path" ]
-then
-  error "Certificate Path does not exist." 255
-fi
+warn() {
+  local msg=$1
+  msg "[WARNING] ${PURPLE}$msg${NOFORMAT}"
+}
 
-if [[ ! -r "$publickeyfile" ]]
-then
-  error "Client Key either does not exist, or you can't read it." 254
-fi
+error() {
+  local msg=$1
+  local code=${2-1}
+  msg "[ERROR] ${RED}$msg${NOFORMAT}"
+  exit "$code"
+}
 
-if [[ ! -r "$ca_key_path" && ! -r "$ca_cert_path" ]]
-then
-  error "CA Certificate or CA Key either do not exist, or you can't read them." 254
-fi
-
-if [ ${#fqdn_root[@]} -eq 0 ]
-then
-  warn "You have not specified a FQDN and one is not configured. Using the CA Name as the FQDN suffix. You may need to recreate this certificate if you are expecting to be able to do FQDN lookups."
-  IFS=',' read -r -a fqdn_root <<< "$(nebula-cert print -json -path "$ca_cert_path" | jq -c .details.name -r)"
-fi
-
-for i in "${!fqdn_root[@]}"
-do
-  [ -n "${fqdn}" ] && fqdn="${fqdn},"
-  fqdn="${fqdn}${name}.${fqdn_root[$i]}"
-done
-
-ranges=()
-for range in $("${nebula_cert_bin}" print -json -path "$ca_cert_path" | jq -c .details.ips[] -r)
-do
-  ranges+=("$range")
-done
-
-[ -z "${subnet_cidr-}" ] && subnet_cidr="10.44.88.0/24"
-valid_cidr_network "${subnet_cidr}"
-
-[ ${#ranges[@]} -eq 0 ] && ranges=("${subnet_cidr}")
-[ -z "$subnet" ] && subnet=0
-
-if [ $subnet -gt ${#ranges[@]} ]
-then
-  defined_ranges=""
-  for i in "${!ranges[@]}"
-  do
-    [ -n "${defined_ranges}" ] && defined_ranges="${defined_ranges},"
-    defined_ranges="${defined_ranges}${ranges[$i]}"
-  done
-  error "Specified subnet index is greater than the defined ranges: ${defined_ranges}" 253
-fi
-
-if [ -z "${ip}" ]
-then
-  # Source: https://linuxhint.com/convert_hexadecimal_decimal_bash/
-  ip="$(( 16#$(echo -n "${fqdn}" | md5sum -z | cut -c-14) ))"
-fi
-
-used_ips=()
-if [[ $(( 0 + $(find . -name "*.crt" | wc -l) )) -gt 0 ]]
-then
-  for cert_file in *.crt
-  do
-    json="$("${nebula_cert_bin}" print -json -path "${cert_file}")"
-    if echo "${json}" | grep '"isCa":false' >/dev/null 2>/dev/null
+main() {
+  if [ -z "${nebula_cert_bin:-""}" ]
+  then
+    nebula_cert_bin="$(which nebula-cert || echo "")"
+    if [ -z "${nebula_cert_bin}" ]
     then
-      IFS=',' read -r -a used_ip_array <<< "$(echo "${json}" | jq -c .details.ips[] -r)"
-      for i in "${!used_ip_array[@]}"
-      do
-        used_ips+=("${used_ip_array[$i]}:${cert_file}")
-      done
+      echo "nebula-cert not located using which. Please set the nebula_cert_bin variable."
+      exit 1
+    fi
+  fi
+
+  if [ ! -e "${nebula_cert_bin}" ]
+  then
+    echo "nebula-cert not located at the path specified. Please install and retry."
+    exit 1
+  fi
+
+  setup_colors
+  parse_params "$@"
+
+  [ -e "${name}.crt" ] && error "Certificate has already been created." 2
+
+  ca_key_path="$cert_path/ca.key"
+  ca_cert_path="$cert_path/ca.crt"
+  fqdn=""
+
+  if [ ! -e "$cert_path" ]
+  then
+    error "Certificate Path does not exist." 255
+  fi
+
+  if [ -n "$publickeyfile" ] && [[ ! -r "$publickeyfile" ]]
+  then
+    error "Client Key either does not exist, or you can't read it." 254
+  fi
+
+  if [[ ! -r "$ca_key_path" && ! -r "$ca_cert_path" ]]
+  then
+    error "CA Certificate or CA Key either do not exist, or you can't read them." 254
+  fi
+
+  if [ ${#fqdn_root[@]} -eq 0 ]
+  then
+    warn "You have not specified a FQDN and one is not configured. Using the CA Name as the FQDN suffix. You may need to recreate this certificate if you are expecting to be able to do FQDN lookups."
+    fqdn_root+=("$(get_ca_name)")
+  fi
+
+  for i in "${!fqdn_root[@]}"
+  do
+    [ -n "${fqdn}" ] && fqdn="${fqdn},"
+    fqdn="${fqdn}${name}.${fqdn_root[$i]}"
+  done
+
+  ranges=()
+  for range in $(get_ip_ranges "$ca_cert_path")
+  do
+    ranges+=("$range")
+  done
+
+  [ -z "${subnet_cidr-}" ] && subnet_cidr="10.44.88.0/24"
+  valid_ipv4_cidr_network "${subnet_cidr}"
+
+  [ ${#ranges[@]} -eq 0 ] && ranges=("${subnet_cidr}")
+  [ -z "$subnet" ] && subnet=0
+
+  if [ $subnet -gt ${#ranges[@]} ]
+  then
+    defined_ranges=""
+    for i in "${!ranges[@]}"
+    do
+      [ -n "${defined_ranges}" ] && defined_ranges="${defined_ranges},"
+      defined_ranges="${defined_ranges}${ranges[$i]}"
+    done
+    error "Specified subnet index is greater than the defined ranges: ${defined_ranges}" 253
+  fi
+
+  if [ -z "${ip}" ]
+  then
+    # Source: https://linuxhint.com/convert_hexadecimal_decimal_bash/
+    ip="$(( 16#$(echo -n "${fqdn}" | md5sum -z | cut -c-14) ))"
+  fi
+
+  used_ips=()
+  if [[ $(( 0 + $(find . -name "*.crt" | wc -l) )) -gt 0 ]]
+  then
+    for cert_file in *.crt
+    do
+      debug "Parsing ${cert_file}"
+      if [ ! "${cert_file}" == "${ca_cert_path}" ] && cert_content="$("${nebula_cert_bin}" print -path "${cert_file}" 2>/dev/null)"
+      then
+        used_ips+=("$(get_ip_ranges "${cert_content}"):${cert_file}")
+      fi
+    done
+  fi
+
+  increment=0
+  real_ip=""
+  until [ -n "$real_ip" ]
+  do
+    ipv4_cidr_iter "${ranges[$subnet]}" "$(( ip + increment - 1 ))"
+    debug "Trying to use $result"
+    real_ip="${result}"
+
+    for an_ip in "${!used_ips[@]}"
+    do
+      if [[ "${used_ips[$an_ip]}" =~ ^${real_ip}: ]]
+      then
+        debug "Sorry, $(cut -d: -f2 <<< "${used_ips[$an_ip]}") uses that IP."
+        increment=$(( increment + 1 ))
+        real_ip=""
+      fi
+    done
+
+    if [ ${#ip_range[@]} -lt ${#used_ips[@]} ]
+    then
+      error "You have no more available IP addresses (Trying to allocate ${#used_ips[@]} in ${#ip_range[@]})"
     fi
   done
-fi
 
-increment=0
-real_ip=""
-until [ -n "$real_ip" ]
-do
-  cidr_iter "${ranges[$subnet]}" "$(( ip + increment - 1 ))"
-  real_ip="${result}"
-
-  for an_ip in "${!used_ips[@]}"
+  msg "${RED}Read parameters:${NOFORMAT}"
+  msg "- name: ${fqdn}"
+  msg "- ip: ${real_ip}"
+  for i in "${!group[@]}"
   do
-    if [[ "${used_ips[$an_ip]}" =~ ^${real_ip}: ]]
-    then
-      increment=$(( increment + 1 ))
-      real_ip=""
-    fi
+    msg "- group: ${group[$i]}"
   done
-done
 
-msg "${RED}Read parameters:${NOFORMAT}"
-msg "- name: ${fqdn}"
-msg "- ip: ${real_ip}"
-for i in "${!group[@]}"
-do
-  msg "- group: ${group[$i]}"
-done
+  group_list=""
+  for i in "${!group[@]}"
+  do
+    [ -n "$group_list" ] && group_list="${group_list},"
+    group_list="${group_list}${group[$i]}"
+  done
 
-group_list=""
-for i in "${!group[@]}"
-do
-  [ -n "$group_list" ] && group_list="${group_list},"
-  group_list="${group_list}${group[$i]}"
-done
+  if [ -z "${publickeyfile}" ]
+  then
+    echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
+    "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
+  else
+    echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${publickeyfile}"
+    "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${publickeyfile}"
+  fi
+}
 
-if [ -z "${publickeyfile}" ]
-then
-  echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
-  "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -out-key "${name}.key"
-else
-  echo "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${publickeyfile}"
-  "${nebula_cert_bin}" sign -ca-crt "$ca_cert_path" -ca-key "$ca_key_path" -groups "${group_list}" -ip "${real_ip}" -name "${fqdn}" -out-crt "${name}.crt" -in-pub "${publickeyfile}"
-fi
+main "$@"
